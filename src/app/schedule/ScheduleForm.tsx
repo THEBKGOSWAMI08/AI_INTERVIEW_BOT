@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import { motion } from 'framer-motion'
-import { Briefcase, BarChart, Code2, PlayCircle, Loader2, AlertCircle } from 'lucide-react'
+import { Briefcase, BarChart, Code2, PlayCircle, Loader2, AlertCircle, CalendarClock } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { createInterview } from './actions'
 
@@ -14,6 +14,7 @@ export default function ScheduleForm() {
   // Local state for interactive UI
   const [difficulty, setDifficulty] = useState('Medium')
   const [type, setType] = useState('Technical')
+  const [isNow, setIsNow] = useState(true)
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
@@ -22,6 +23,12 @@ export default function ScheduleForm() {
     const formData = new FormData(e.currentTarget)
     formData.set('difficulty', difficulty)
     formData.set('interview_type', type)
+    formData.set('is_now', isNow.toString())
+    
+    // If it's now, just don't pass a date and the action defaults to now()
+    if (isNow) {
+      formData.delete('scheduled_for')
+    }
     
     try {
       const result = await createInterview(formData)
@@ -112,6 +119,56 @@ export default function ScheduleForm() {
         </div>
       </div>
 
+      {/* Date & Time Scheduling */}
+      <div className="space-y-4 pt-4 border-t border-white/10">
+        <label className="text-sm font-medium">When do you want to practice?</label>
+        
+        <div className="grid grid-cols-2 gap-4">
+          <button
+            type="button"
+            onClick={() => setIsNow(true)}
+            className={`py-4 rounded-xl border flex flex-col items-center justify-center gap-2 transition-all ${
+              isNow 
+                ? 'bg-primary/20 border-primary text-primary shadow-sm' 
+                : 'bg-white/5 border-white/10 text-muted-foreground hover:bg-white/10 hover:text-foreground'
+            }`}
+          >
+            <PlayCircle className="w-5 h-5" />
+            <span className="text-sm font-semibold">Start Right Now</span>
+          </button>
+          
+          <button
+            type="button"
+            onClick={() => setIsNow(false)}
+            className={`py-4 rounded-xl border flex flex-col items-center justify-center gap-2 transition-all ${
+              !isNow 
+                ? 'bg-primary/20 border-primary text-primary shadow-sm' 
+                : 'bg-white/5 border-white/10 text-muted-foreground hover:bg-white/10 hover:text-foreground'
+            }`}
+          >
+            <CalendarClock className="w-5 h-5" />
+            <span className="text-sm font-semibold">Schedule for Later</span>
+          </button>
+        </div>
+
+        {!isNow && (
+          <motion.div 
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            className="pt-4"
+          >
+             <label className="text-sm font-medium text-muted-foreground mb-2 block">Select Date and Time <span className="text-destructive">*</span></label>
+             <input
+                name="scheduled_for"
+                type="datetime-local"
+                required={!isNow}
+                min={new Date().toISOString().slice(0, 16)} // Prevent past dates
+                className="w-full bg-black/20 border border-white/10 rounded-xl px-4 py-4 focus:outline-none focus:ring-2 focus:ring-primary/50 transition-all font-medium text-white [color-scheme:dark]"
+             />
+          </motion.div>
+        )}
+      </div>
+
       <motion.button
         whileHover={{ scale: 1.01 }}
         whileTap={{ scale: 0.99 }}
@@ -120,10 +177,15 @@ export default function ScheduleForm() {
       >
         {loading ? (
           <Loader2 className="w-5 h-5 animate-spin text-black" />
-        ) : (
+        ) : isNow ? (
           <>
             Continue to Device Setup
             <PlayCircle className="w-5 h-5 fill-black text-white" />
+          </>
+        ) : (
+          <>
+            Save to Dashboard
+            <CalendarClock className="w-5 h-5" />
           </>
         )}
       </motion.button>

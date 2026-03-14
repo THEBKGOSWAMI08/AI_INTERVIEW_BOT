@@ -1,8 +1,8 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import { motion } from 'framer-motion'
-import { Loader2, User, GraduationCap, Building, Calendar, Sparkles, AlertCircle } from 'lucide-react'
+import { Loader2, User, GraduationCap, Building, Calendar, Sparkles, AlertCircle, FileText, UploadCloud, CheckCircle2 } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { saveProfile } from './actions'
 
@@ -14,18 +14,25 @@ interface ProfileData {
   course?: string;
   college?: string;
   graduation_year?: number;
+  resume_url?: string;
 }
 
 export default function ProfileForm({ initialData }: { initialData?: ProfileData | null }) {
   const router = useRouter()
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [resumeFile, setResumeFile] = useState<File | null>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
     setLoading(true)
     setError(null)
     const formData = new FormData(e.currentTarget)
+    // Attach the selected file manually to formData
+    if (resumeFile) {
+      formData.set('resume', resumeFile)
+    }
     
     try {
       const result = await saveProfile(formData)
@@ -157,6 +164,47 @@ export default function ProfileForm({ initialData }: { initialData?: ProfileData
             />
           </div>
         </div>
+      </div>
+
+      {/* Resume Upload */}
+      <div className="space-y-2">
+        <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Resume (PDF or DOCX)</label>
+        <div
+          onClick={() => fileInputRef.current?.click()}
+          className="w-full cursor-pointer border border-dashed border-white/20 rounded-xl px-4 py-5 flex items-center gap-4 hover:border-primary/50 hover:bg-primary/5 transition-all"
+        >
+          <div className="w-10 h-10 rounded-xl bg-white/5 flex items-center justify-center shrink-0">
+            {resumeFile ? <CheckCircle2 className="w-5 h-5 text-green-400" /> : <UploadCloud className="w-5 h-5 text-muted-foreground" />}
+          </div>
+          <div className="min-w-0">
+            {resumeFile ? (
+              <p className="text-sm font-medium text-green-400 truncate">{resumeFile.name}</p>
+            ) : (
+              <>
+                <p className="text-sm font-medium">{initialData?.resume_url ? 'Replace existing resume' : 'Upload your resume'}</p>
+                <p className="text-xs text-muted-foreground mt-0.5">PDF or DOCX, max 5MB</p>
+              </>
+            )}
+          </div>
+          {initialData?.resume_url && !resumeFile && (
+            <a
+              href={initialData.resume_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={e => e.stopPropagation()}
+              className="ml-auto shrink-0 flex items-center gap-1.5 text-xs text-primary hover:underline"
+            >
+              <FileText className="w-3.5 h-3.5" /> View current
+            </a>
+          )}
+        </div>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+          className="hidden"
+          onChange={e => setResumeFile(e.target.files?.[0] ?? null)}
+        />
       </div>
 
       <motion.button

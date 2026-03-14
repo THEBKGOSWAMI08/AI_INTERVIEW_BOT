@@ -1,10 +1,11 @@
 'use client'
 
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Mic, Square, ChevronRight, Video, Code2, HeartPulse, Send } from 'lucide-react'
 import Editor from '@monaco-editor/react'
 import { useRouter } from 'next/navigation'
+import { completeInterview } from './actions'
 
 // Mock Questions Database
 const MOCK_QUESTIONS = [
@@ -29,7 +30,7 @@ const MOCK_QUESTIONS = [
   }
 ]
 
-export default function InterviewClient({ interviewId: _interviewId }: { interviewId: string }) {
+export default function InterviewClient({ interviewId }: { interviewId: string }) {
   const router = useRouter()
   const [currentIdx, setCurrentIdx] = useState(0)
   const [stream, setStream] = useState<MediaStream | null>(null)
@@ -39,6 +40,9 @@ export default function InterviewClient({ interviewId: _interviewId }: { intervi
   const [bpm, setBpm] = useState(72)
   const [isRecording, setIsRecording] = useState(false)
   const [answerContent, setAnswerContent] = useState('')
+  const [interimTranscript, setInterimTranscript] = useState('')
+  const [savedAnswers, setSavedAnswers] = useState<string[]>([])
+  const recognitionRef = useRef<any>(null)
 
   const currentQ = MOCK_QUESTIONS[currentIdx]
   const isLastQ = currentIdx === MOCK_QUESTIONS.length - 1
@@ -57,12 +61,61 @@ export default function InterviewClient({ interviewId: _interviewId }: { intervi
     // Simulate Fake BPM Fluctuations
     const interval = setInterval(() => {
       setBpm(prev => {
-        // Random walk between 65 and 110
         const change = Math.floor(Math.random() * 5) - 2
         const next = prev + change
         return Math.min(Math.max(next, 65), 110)
       })
     }, 2000)
+
+    // Setup Speech Recognition
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
+    if (SpeechRecognition) {
+      const recognition = new SpeechRecognition()
+      recognition.continuous = true
+      recognition.interimResults = true
+      recognition.lang = 'en-US'
+      recognition.isRunning = false   // custom guard flag
+
+      recognition.onresult = (event: any) => {
+        let finalText = ''
+        let interimText = ''
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          const transcript = event.results[i][0].transcript
+          if (event.results[i].isFinal) {
+            finalText += transcript + ' '
+          } else {
+            interimText += transcript
+          }
+        }
+        if (finalText) {
+          setAnswerContent(prev => prev + finalText)
+        }
+        setInterimTranscript(interimText)
+      }
+
+      recognition.onerror = (event: any) => {
+        // 'aborted' is harmless — it fires when .stop() is called manually or on React StrictMode double-invoke
+        if (event.error === 'aborted') return
+        console.error('Speech recognition error:', event.error)
+        recognition.isRunning = false
+        setIsRecording(false)
+        setInterimTranscript('')
+      }
+
+      recognition.onstart = () => {
+        recognition.isRunning = true
+      }
+
+      recognition.onend = () => {
+        recognition.isRunning = false
+        // Auto-restart only if the user deliberately kept recording
+        if (recognition.shouldRestart) {
+          try { recognition.start() } catch (_) {}
+        }
+      }
+
+      recognitionRef.current = recognition
+    }
 
     return () => {
       clearInterval(interval)
@@ -70,13 +123,47 @@ export default function InterviewClient({ interviewId: _interviewId }: { intervi
     }
   }, []) // eslint-disable-line
 
-  const handleNext = () => {
-    // Mock save answer logic here
-    if (isLastQ) {
-      // End interview, go to dashboard or report
-      // For hackathon: just go back to dashboard
-      router.push('/dashboard')
+  const toggleRecording = useCallback(() => {
+    const recognition = recognitionRef.current
+    if (!recognition) {
+      alert('Speech recognition is not supported in this browser. Please use Chrome or Edge.')
+      return
+    }
+
+    if (isRecording) {
+      recognition.shouldRestart = false
+      if (recognition.isRunning) recognition.stop()
+      setIsRecording(false)
+      setInterimTranscript('')
     } else {
+      if (!recognition.isRunning) {
+        recognition.shouldRestart = true
+        try {
+          recognition.start()
+          setIsRecording(true)
+        } catch (e) {
+          console.warn('Could not start recognition:', e)
+        }
+      }
+    }
+  }, [isRecording])
+
+  const handleNext = async () => {
+    if (isRecording) toggleRecording()
+    setInterimTranscript('')
+
+    const currentAnswer = answerContent.trim() || '(No answer provided)'
+
+    if (isLastQ) {
+      const allAnswers = [...savedAnswers, currentAnswer]
+      // Calculate a simple mock score based on answer lengths
+      const mockScore = Math.min(100, Math.round(
+        allAnswers.reduce((sum, a) => sum + Math.min(a.length / 5, 30), 0)
+      ))
+      await completeInterview(interviewId, allAnswers, mockScore)
+      router.push(`/report/${interviewId}`)
+    } else {
+      setSavedAnswers(prev => [...prev, currentAnswer])
       setCurrentIdx(i => i + 1)
       setAnswerContent(MOCK_QUESTIONS[currentIdx + 1]?.initialCode || '')
     }
@@ -130,19 +217,35 @@ export default function InterviewClient({ interviewId: _interviewId }: { intervi
               ) : (
                 <div className="h-full w-full p-4 flex flex-col relative">
                   <textarea
-                    className="flex-1 w-full bg-transparent resize-none focus:outline-none placeholder:text-muted-foreground/30 text-lg leading-relaxed"
-                    placeholder="Type your answer here, or click the mic to dictate..."
+                    className="flex-1 w-full bg-transparent resize-none focus:outline-none placeholder:text-muted-foreground/30 text-lg leading-relaxed pb-24"
+                    placeholder="Type your answer here, or click the 🎤 mic button to dictate..."
                     value={answerContent}
                     onChange={e => setAnswerContent(e.target.value)}
                   />
+
+                  {/* Interim transcript preview */}
+                  {(isRecording || interimTranscript) && (
+                    <div className="mt-2 px-3 py-2 rounded-lg bg-primary/10 border border-primary/20 text-sm text-primary/80 italic">
+                      {interimTranscript ? (
+                        <span>{interimTranscript}</span>
+                      ) : (
+                        <span className="animate-pulse">Listening... speak now</span>
+                      )}
+                    </div>
+                  )}
+
                   <div className="absolute bottom-4 left-4 right-4 flex justify-between items-center">
                     <button 
-                      onClick={() => setIsRecording(!isRecording)}
-                      className={`p-4 rounded-full transition-all flex items-center justify-center gap-2 ${isRecording ? 'bg-destructive/20 text-destructive animate-pulse' : 'bg-primary text-primary-foreground hover:bg-primary/90 shadow-lg shadow-primary/20'}`}
+                      onClick={toggleRecording}
+                      className={`p-4 rounded-full transition-all flex items-center justify-center gap-2 ${
+                        isRecording 
+                          ? 'bg-destructive/20 text-destructive ring-2 ring-destructive/50 animate-pulse' 
+                          : 'bg-primary text-primary-foreground hover:bg-primary/90 shadow-lg shadow-primary/20'
+                      }`}
                     >
                       {isRecording ? <Square className="w-5 h-5 fill-current" /> : <Mic className="w-5 h-5" />}
                     </button>
-                    {isRecording && <span className="text-sm font-medium text-destructive mr-auto ml-4 animate-pulse">Listening...</span>}
+                    {isRecording && <span className="text-sm font-medium text-destructive mr-auto ml-4 animate-pulse">🔴 Recording — speak your answer</span>}
                   </div>
                 </div>
               )}

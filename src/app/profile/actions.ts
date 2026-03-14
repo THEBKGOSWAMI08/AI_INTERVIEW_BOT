@@ -20,8 +20,14 @@ export async function saveProfile(formData: FormData) {
   const skillsString = formData.get('skills') as string
   const skills = skillsString.split(',').map(s => s.trim()).filter(Boolean)
 
-  const profileData = {
-    id: user?.id || 'dummy-user-id',
+  const actualId = user?.id || (isBypass ? '00000000-0000-0000-0000-000000000001' : null)
+
+  if (!actualId) {
+    return { error: 'Not authenticated' }
+  }
+
+  const profileData: Record<string, any> = {
+    id: actualId,
     name: formData.get('name') as string,
     age: parseInt(formData.get('age') as string, 10),
     skills,
@@ -29,18 +35,40 @@ export async function saveProfile(formData: FormData) {
     gender: formData.get('gender') as string,
     college: formData.get('college') as string,
     graduation_year: parseInt(formData.get('graduation_year') as string, 10),
-    updated_at: new Date().toISOString(),
   }
 
-  // Upsert profile data
-  if (user) {
-    const { error } = await supabase
-      .from('profiles')
-      .upsert({ ...profileData, id: user.id })
+  // Handle resume upload to Supabase Storage
+  const resumeFile = formData.get('resume') as File | null
+  if (resumeFile && resumeFile.size > 0) {
+    const fileExt = resumeFile.name.split('.').pop()
+    const filePath = `${actualId}/resume.${fileExt}`
+    const arrayBuffer = await resumeFile.arrayBuffer()
+    const fileBuffer = Buffer.from(arrayBuffer)
 
-    if (error) {
-      return { error: error.message }
+    const { error: uploadError } = await supabase.storage
+      .from('resumes')
+      .upload(filePath, fileBuffer, {
+        contentType: resumeFile.type,
+        upsert: true,
+      })
+
+    if (uploadError) {
+      return { error: `Resume upload failed: ${uploadError.message}` }
     }
+
+    const { data: publicUrlData } = supabase.storage
+      .from('resumes')
+      .getPublicUrl(filePath)
+
+    profileData.resume_url = publicUrlData.publicUrl
+  }
+
+  const { error: dbError } = await supabase
+    .from('profiles')
+    .upsert(profileData)
+
+  if (dbError) {
+    return { error: dbError.message }
   }
 
   revalidatePath('/dashboard')
